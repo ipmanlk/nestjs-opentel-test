@@ -1,5 +1,5 @@
 allowBuilds:
   '@nestjs/core': true
+  nestjs-pino: true
   protobufjs: true
   unrs-resolver: true
-minimumReleaseAge: 20160

@@ -1,6 +1,6 @@
-# OpenTelemetry NestJS + OpenObserve
+# OpenTelemetry NestJS + OpenObserve (Pino)
 
-A NestJS 11 project instrumented with OpenTelemetry, sending traces and logs to [OpenObserve](https://openobserve.ai) via OTLP.
+A NestJS 11 project instrumented with OpenTelemetry, sending traces, logs, and metrics to [OpenObserve](https://openobserve.ai) via OTLP.
 
 ## Architecture
 
@@ -14,14 +14,15 @@ A NestJS 11 project instrumented with OpenTelemetry, sending traces and logs to 
 │  └──────┬───────┘   └────────┬────────┘  │
 │         │                    │           │
 │  ┌──────▼────────────────────▼────────┐  │
-│  │ Winston (Logger)                   │  │
-│  │  ├── Console Transport             │  │
-│  │  └── OpenTelemetryTransportV3     │  │
+│  │ Pino (Logger)                      │  │
+│  │  ├── JSON/Pretty output            │  │
+│  │  └── Span/Trace context            │  │
 │  └───────────────┬───────────────────┘  │
 │                  │                      │
 │  ┌──────────────▼───────────────────┐  │
 │  │ @opentelemetry/sdk-node          │  │
 │  │  ├── OTLPTraceExporter ──────────│──│──▶ OpenObserve (traces)
+│  │  ├── OTLPMetricExporter ─────────│──│──▶ OpenObserve (metrics)
 │  │  ├── BatchLogRecordProcessor ────│──│──▶ OpenObserve (logs)
 │  │  └── Auto-instrumentations       │  │
 │  └──────────────────────────────────┘  │
@@ -29,9 +30,10 @@ A NestJS 11 project instrumented with OpenTelemetry, sending traces and logs to 
 ```
 
 - **Traces**: Sent directly via `OTLPTraceExporter` to OpenObserve's `/v1/traces` endpoint
-- **Logs**: Winston → `OpenTelemetryTransportV3` → `BatchLogRecordProcessor` → `OTLPLogExporter` → OpenObserve `/v1/logs`
+- **Metrics**: Sent via `OTLPMetricExporter` to OpenObserve `/v1/metrics`
+- **Logs**: Pino logs include `traceId`/`spanId` via `PinoInstrumentation` and are exported through `BatchLogRecordProcessor` → `OTLPLogExporter` → OpenObserve `/v1/logs`
 - **Auto-instrumentation**: `getNodeAutoInstrumentations()` automatically captures HTTP calls, database queries, etc.
-- **Manual instrumentation**: Use `trace.getTracer()` to create custom spans in your services
+- **Manual instrumentation**: Use `ObservabilityService.getTracer()` to create custom spans in your services
 
 ## Prerequisites
 
@@ -49,6 +51,8 @@ A NestJS 11 project instrumented with OpenTelemetry, sending traces and logs to 
 | `O2_AUTH` | `""` | **Yes** | Base64-encoded `email:password` token |
 | `OTEL_SERVICE_NAME` | `my-nestjs-app` | No | Service name in traces/logs |
 | `OTEL_SERVICE_VERSION` | `1.0.0` | No | Service version |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | `10000` | No | OTLP exporter timeout (ms) |
+| `LOG_LEVEL` | `info` | No | Pino log level |
 
 ### Getting your O2_AUTH token
 
@@ -66,7 +70,7 @@ Copy the output and set it as `O2_AUTH` in `.env`.
 pnpm install
 
 # 2. Copy and configure environment
-cp .env.example .env
+cp env.example .env
 # Edit .env — set O2_AUTH to your base64 token
 
 # 3. Update lockfile to latest OTel versions
@@ -79,25 +83,32 @@ pnpm start:dev
 
 ## Writing Custom Spans
 
-The tracer is available from `@opentelemetry/api`. Get a tracer instance and create spans in your services:
+Use the `ObservabilityService` to get a tracer instance and create spans in your services:
 
 ```typescript
-import { trace, SpanStatusCode } from '@opentelemetry/api';
+import { Injectable } from '@nestjs/common';
+import { SpanStatusCode } from '@opentelemetry/api';
+import { ObservabilityService } from './observability/observability.service';
 
-const tracer = trace.getTracer('my-nestjs-app');
+@Injectable()
+export class DemoService {
+  constructor(private readonly observability: ObservabilityService) {}
 
-// Basic span
-const span = tracer.startSpan('myOperation');
-try {
-  span.setAttribute('key', 'value');
-  span.addEvent('step.completed', { step: 1 });
-  // ... your logic ...
-} catch (error) {
-  span.recordException(error);
-  span.setStatus({ code: SpanStatusCode.ERROR });
-  throw error;
-} finally {
-  span.end();
+  doWork() {
+    const tracer = this.observability.getTracer();
+    const span = tracer.startSpan('myOperation');
+    try {
+      span.setAttribute('key', 'value');
+      span.addEvent('step.completed', { step: 1 });
+      // ... your logic ...
+    } catch (error) {
+      span.recordException(error);
+      span.setStatus({ code: SpanStatusCode.ERROR });
+      throw error;
+    } finally {
+      span.end();
+    }
+  }
 }
 ```
 
@@ -168,6 +179,13 @@ try {
 | `GET /process?items=a,b,c` | Processes items in a loop with per-item child spans | `processItems` → `processItem` (N child spans) |
 | `GET /error` | Triggers an intentional error | `throwError` with error status |
 
+## Metrics Example
+
+This app emits two metrics via `ObservabilityService`:
+
+- `app_requests_total` (counter, tags: `route`, `method`)
+- `app_work_duration_ms` (histogram, tags: `name`)
+
 ## Scripts
 
 | Script | Command | Description |
@@ -186,19 +204,13 @@ All scripts use `--env-file=.env` to automatically load environment variables (N
 
 `otel.ts` is imported as the first module in `main.ts`. When loaded, it:
 
-1. Creates the OTLP trace and log exporters pointing at OpenObserve
+1. Creates the OTLP trace, metric, and log exporters pointing at OpenObserve
 2. Configures a `NodeSDK` with exporters, processors, and auto-instrumentations
-3. Calls `otelSDK.start()` immediately — this registers the global `LoggerProvider` and `TracerProvider` **before** NestJS modules initialize
-
-This is critical because `OpenTelemetryTransportV3` (the winston → OTLP bridge) needs the global `LoggerProvider` to exist when winston initializes.
+3. Calls `otelSDK.start()` immediately — this registers the global `LoggerProvider`, `TracerProvider`, and `MeterProvider` **before** NestJS modules initialize
 
 ### Logger Wiring (main.ts)
 
-`WinstonModule.forRoot()` in `AppModule` creates a winston logger with two transports:
-- Console (structured JSON)
-- `OpenTelemetryTransportV3` (sends via OTLP)
-
-`main.ts` then calls `app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER))` to replace NestJS's default Logger with the winston-backed one. This ensures all `new Logger()` calls throughout the app go through winston → OTLP → OpenObserve.
+`LoggerModule.forRoot()` in `AppModule` configures Pino for NestJS. The `PinoInstrumentation` adds `traceId` and `spanId` to each log record, so logs are correlated with traces. `main.ts` then calls `app.useLogger(app.get(Logger))` to use the Pino-backed logger.
 
 ### Graceful Shutdown
 

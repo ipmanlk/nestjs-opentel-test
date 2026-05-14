@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { trace, SpanStatusCode } from '@opentelemetry/api';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { logRecordProcessor } from '../otel';
+import { ObservabilityService } from '../observability/observability.service';
 
 export interface OrderItem {
   productId: string;
@@ -33,28 +34,31 @@ interface InventoryResult {
 @Injectable()
 export class ProductionService {
   private readonly logger = new Logger(ProductionService.name);
-  private readonly tracer = trace.getTracer('production-module');
+
+  constructor(private readonly observability: ObservabilityService) {}
 
   async placeOrder(customerId: string, items: OrderItem[]): Promise<Order> {
-    const span = this.tracer.startSpan('placeOrder');
+    const span = this.observability.getTracer().startSpan('placeOrder');
     span.setAttribute('customer.id', customerId);
     span.setAttribute('item.count', items.length);
 
     try {
       this.logger.log(`Placing order for customer ${customerId}`);
 
-      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+       const orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       span.setAttribute('order.id', orderId);
 
-      span.addEvent('order.validation.started');
-      await this.delay(30);
-      const total = this.calculateTotal(items);
+       span.addEvent('order.validation.started');
+       const validationDelayMs = 30;
+       await this.delay(validationDelayMs);
+       this.observability.recordWork(validationDelayMs, 'order.validation');
+       const total = this.calculateTotal(items);
       span.setAttribute('order.total', total);
       span.addEvent('order.validation.completed', { total });
 
-      span.addEvent('inventory.check.started');
-      const inventoryResults = await this.checkInventory(items);
-      span.addEvent('inventory.check.completed');
+       span.addEvent('inventory.check.started');
+       const inventoryResults = await this.checkInventory(items);
+       span.addEvent('inventory.check.completed');
 
       const outOfStock = inventoryResults.filter((r) => !r.available);
       if (outOfStock.length > 0) {
@@ -64,24 +68,24 @@ export class ProductionService {
         span.setAttribute('out.of.stock.items', outOfStock.length);
       }
 
-      span.addEvent('payment.processing.started');
-      const payment = await this.processPayment(customerId, total);
-      span.addEvent('payment.processing.completed', {
-        transactionId: payment.transactionId,
-        status: payment.status,
-      });
+       span.addEvent('payment.processing.started');
+       const payment = await this.processPayment(customerId, total);
+       span.addEvent('payment.processing.completed', {
+         transactionId: payment.transactionId,
+         status: payment.status,
+       });
 
       if (payment.status === 'declined') {
         throw new Error(`Payment declined for customer ${customerId}`);
       }
 
-      span.addEvent('shipping.calculation.started');
-      const shippingInfo = await this.calculateShipping(items);
-      span.addEvent('shipping.calculation.completed');
+       span.addEvent('shipping.calculation.started');
+       const shippingInfo = await this.calculateShipping(items);
+       span.addEvent('shipping.calculation.completed');
 
-      span.addEvent('notification.sending.started');
-      await this.sendConfirmationEmail(customerId, orderId);
-      span.addEvent('notification.sending.completed');
+       span.addEvent('notification.sending.started');
+       await this.sendConfirmationEmail(customerId, orderId);
+       span.addEvent('notification.sending.completed');
 
       const order: Order = {
         orderId,
@@ -114,7 +118,7 @@ export class ProductionService {
     failureResult: string | null;
     errors: string[];
   }> {
-    const span = this.tracer.startSpan('simulate');
+    const span = this.observability.getTracer().startSpan('simulate');
     const errors: string[] = [];
 
     try {
@@ -160,6 +164,7 @@ export class ProductionService {
 
       this.logger.log('=== Simulation finished ===');
 
+      this.observability.recordRequest('/production/simulate', 'GET');
       await logRecordProcessor.forceFlush();
 
       return { orderResult, refundResult, failureResult, errors };
@@ -175,7 +180,7 @@ export class ProductionService {
   async processRefund(
     orderId: string,
   ): Promise<{ refundId: string; amount: number }> {
-    const span = this.tracer.startSpan('processRefund');
+    const span = this.observability.getTracer().startSpan('processRefund');
     span.setAttribute('order.id', orderId);
 
     try {
@@ -209,7 +214,7 @@ export class ProductionService {
   }
 
   async simulateSystemFailure(): Promise<string> {
-    const span = this.tracer.startSpan('simulateSystemFailure');
+    const span = this.observability.getTracer().startSpan('simulateSystemFailure');
 
     try {
       this.logger.warn('Simulating cascading system failure');
@@ -241,9 +246,11 @@ export class ProductionService {
   }
 
   private async checkInventory(items: OrderItem[]): Promise<InventoryResult[]> {
-    const span = this.tracer.startSpan('checkInventory');
+    const span = this.observability.getTracer().startSpan('checkInventory');
     try {
-      await this.delay(50 + Math.random() * 50);
+       const delayMs = 50 + Math.random() * 50;
+       await this.delay(delayMs);
+       this.observability.recordWork(delayMs, 'checkInventory');
 
       return items.map((item) => {
         const available = Math.random() > 0.15;
@@ -270,11 +277,13 @@ export class ProductionService {
     customerId: string,
     amount: number,
   ): Promise<PaymentResult> {
-    const span = this.tracer.startSpan('processPayment');
+    const span = this.observability.getTracer().startSpan('processPayment');
     span.setAttribute('payment.amount', amount);
 
     try {
-      await this.delay(80 + Math.random() * 70);
+       const delayMs = 80 + Math.random() * 70;
+       await this.delay(delayMs);
+       this.observability.recordWork(delayMs, 'processPayment');
 
       const shouldDecline = Math.random() < 0.2;
       const status = shouldDecline ? 'declined' : 'approved';
@@ -306,11 +315,13 @@ export class ProductionService {
   private async calculateShipping(
     items: OrderItem[],
   ): Promise<{ address: string; cost: number }> {
-    const span = this.tracer.startSpan('calculateShipping');
+    const span = this.observability.getTracer().startSpan('calculateShipping');
     span.setAttribute('item.count', items.length);
 
     try {
-      await this.delay(40 + Math.random() * 30);
+       const delayMs = 40 + Math.random() * 30;
+       await this.delay(delayMs);
+       this.observability.recordWork(delayMs, 'calculateShipping');
 
       const baseCost = 5;
       const itemCost = items.reduce(
@@ -334,11 +345,13 @@ export class ProductionService {
     customerId: string,
     orderId: string,
   ): Promise<void> {
-    const span = this.tracer.startSpan('sendConfirmationEmail');
+    const span = this.observability.getTracer().startSpan('sendConfirmationEmail');
     span.setAttribute('order.id', orderId);
 
     try {
-      await this.delay(30 + Math.random() * 40);
+       const delayMs = 30 + Math.random() * 40;
+       await this.delay(delayMs);
+       this.observability.recordWork(delayMs, 'sendConfirmationEmail');
 
       const shouldFail = Math.random() < 0.1;
       if (shouldFail) {
@@ -353,11 +366,13 @@ export class ProductionService {
   }
 
   private async lookupOrderAmount(orderId: string): Promise<number> {
-    const span = this.tracer.startSpan('lookupOrderAmount');
+    const span = this.observability.getTracer().startSpan('lookupOrderAmount');
     span.setAttribute('order.id', orderId);
 
     try {
-      await this.delay(30);
+       const delayMs = 30;
+       await this.delay(delayMs);
+       this.observability.recordWork(delayMs, 'lookupOrderAmount');
       return Math.floor(Math.random() * 500) + 10;
     } finally {
       span.end();
@@ -368,11 +383,13 @@ export class ProductionService {
     orderId: string,
     amount: number,
   ): Promise<string> {
-    const span = this.tracer.startSpan('executeRefund');
+    const span = this.observability.getTracer().startSpan('executeRefund');
     span.setAttribute('order.id', orderId);
 
     try {
-      await this.delay(100 + Math.random() * 100);
+       const delayMs = 100 + Math.random() * 100;
+       await this.delay(delayMs);
+       this.observability.recordWork(delayMs, 'executeRefund');
 
       const shouldFail = Math.random() < 0.15;
       if (shouldFail) {
@@ -388,9 +405,11 @@ export class ProductionService {
   }
 
   private async serviceA(): Promise<void> {
-    const span = this.tracer.startSpan('serviceA.call');
+    const span = this.observability.getTracer().startSpan('serviceA.call');
     try {
-      await this.delay(20);
+       const delayMs = 20;
+       await this.delay(delayMs);
+       this.observability.recordWork(delayMs, 'serviceA');
       const shouldFail = Math.random() < 0.6;
       if (shouldFail) {
         throw new Error('Service A returned 500 Internal Server Error');
@@ -401,9 +420,11 @@ export class ProductionService {
   }
 
   private async serviceB(): Promise<void> {
-    const span = this.tracer.startSpan('serviceB.call');
+    const span = this.observability.getTracer().startSpan('serviceB.call');
     try {
-      await this.delay(20);
+       const delayMs = 20;
+       await this.delay(delayMs);
+       this.observability.recordWork(delayMs, 'serviceB');
       const shouldFail = Math.random() < 0.5;
       if (shouldFail) {
         throw new Error('Service B returned 503 Service Unavailable');

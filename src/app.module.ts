@@ -1,24 +1,37 @@
-import { Module } from '@nestjs/common';
-import { WinstonModule } from 'nest-winston';
-import { OpenTelemetryTransportV3 } from '@opentelemetry/winston-transport';
-import * as winston from 'winston';
+import { Module, RequestMethod } from '@nestjs/common';
+import { LoggerModule } from 'nestjs-pino';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ProductionModule } from './production/production.module';
+import { ObservabilityModule } from './observability/observability.module';
+
+const parseBoolean = (value: string | undefined, fallback: boolean) => {
+  if (value === undefined) return fallback;
+  return value.toLowerCase() === 'true';
+};
 
 @Module({
   imports: [
-    WinstonModule.forRoot({
-      transports: [
-        new winston.transports.Console({
-          format: winston.format.combine(
-            winston.format.timestamp(),
-            winston.format.json(),
-          ),
-        }),
-        new OpenTelemetryTransportV3(),
-      ],
+    LoggerModule.forRoot({
+      pinoHttp: {
+        autoLogging: parseBoolean(process.env.LOG_REQUESTS, false),
+        level: process.env.LOG_LEVEL || 'info',
+        transport:
+          process.env.NODE_ENV === 'production' ||
+          !parseBoolean(process.env.LOG_PRETTY, true)
+            ? undefined
+            : {
+                target: 'pino-pretty',
+                options: {
+                  colorize: true,
+                  translateTime: 'SYS:standard',
+                  singleLine: true,
+                },
+              },
+      },
+      forRoutes: [{ path: '*path', method: RequestMethod.ALL }],
     }),
+    ObservabilityModule,
     ProductionModule,
   ],
   controllers: [AppController],

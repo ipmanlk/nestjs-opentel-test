@@ -30,14 +30,16 @@
     "@opentelemetry/exporter-metrics-otlp-http": "^0.217.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.217.0",
     "@opentelemetry/resources": "^2.7.1",
+    "@opentelemetry/instrumentation-pino": "^0.64.0",
     "@opentelemetry/sdk-logs": "^0.217.0",
+    "@opentelemetry/sdk-metrics": "^2.7.1",
     "@opentelemetry/sdk-node": "^0.217.0",
     "@opentelemetry/semantic-conventions": "^1.41.1",
-    "@opentelemetry/winston-transport": "^0.27.0",
-    "nest-winston": "^1.10.2",
+    "nestjs-pino": "^3.5.0",
+    "pino": "^9.11.0",
+    "pino-pretty": "^13.1.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2",
-    "winston": "^3.19.0"
+    "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
