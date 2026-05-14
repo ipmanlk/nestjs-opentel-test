@@ -38,7 +38,7 @@ const logExporter = new OTLPLogExporter({
   },
 });
 
-const logRecordProcessor = new BatchLogRecordProcessor(logExporter);
+export const logRecordProcessor = new BatchLogRecordProcessor(logExporter);
 
 export const otelSDK = new NodeSDK({
   resource: resourceFromAttributes({

@@ -14,13 +14,17 @@ export class AppController {
   }
 
   @Get('greet/:name')
-  async greet(@Param('name') name: string): Promise<{ message: string; nameLength: number }> {
+  async greet(
+    @Param('name') name: string,
+  ): Promise<{ message: string; nameLength: number }> {
     this.logger.log(`GET /greet/${name} called`);
     return this.appService.greet(name);
   }
 
   @Get('data/:id')
-  async getData(@Param('id') id: string): Promise<{ id: string; data: string }> {
+  async getData(
+    @Param('id') id: string,
+  ): Promise<{ id: string; data: string }> {
     this.logger.log(`GET /data/${id} called`);
     return this.appService.fetchData(id);
   }

@@ -4,6 +4,7 @@ import { OpenTelemetryTransportV3 } from '@opentelemetry/winston-transport';
 import * as winston from 'winston';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { ProductionModule } from './production/production.module';
 
 @Module({
   imports: [
@@ -15,9 +16,10 @@ import { AppService } from './app.service';
             winston.format.json(),
           ),
         }),
-        new OpenTelemetryTransportV3(), // sends logs via OTLP to OpenObserve
+        new OpenTelemetryTransportV3(),
       ],
     }),
+    ProductionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
