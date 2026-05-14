@@ -105,9 +105,11 @@ export class AppService {
       const results: string[] = [];
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        const itemSpan = this.observability.getTracer().startSpan('processItem', {
-          attributes: { item, index: i },
-        });
+        const itemSpan = this.observability
+          .getTracer()
+          .startSpan('processItem', {
+            attributes: { item, index: i },
+          });
         try {
           const result = `processed-${item}`;
           itemSpan.addEvent('item.processed', { item, result });

@@ -1,5 +1,5 @@
 import { Module, RequestMethod } from '@nestjs/common';
-import { LoggerModule } from 'nestjs-pino';
+import { LoggerModule } from './lib/nestjs-pino';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ProductionModule } from './production/production.module';
